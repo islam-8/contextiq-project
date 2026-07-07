@@ -1,0 +1,256 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(MEMBER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspaceId   String?
+  workspace     Workspace?   @relation(fields: [workspaceId], references: [id])
+  accounts      Account[]
+  sessions      Session[]
+  meetings      Meeting[]
+  actions       ActionItem[]
+  messages      ChatMessage[]
+  @@map("users")
+}
+
+enum Role { OWNER ADMIN MEMBER VIEWER }
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  plan        Plan     @default(STARTER)
+  hoursLimit  Int      @default(10)
+  hoursUsed   Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users        User[]
+  meetings     Meeting[]
+  insights     Insight[]
+  crmAccounts  CRMAccount[]
+  integrations Integration[]
+  nodes        GraphNode[]
+  @@map("workspaces")
+}
+
+enum Plan { STARTER PRO ENTERPRISE }
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("sessions")
+}
+
+model Meeting {
+  id            String        @id @default(cuid())
+  title         String
+  type          MeetingType   @default(INTERNAL)
+  status        MeetingStatus @default(SCHEDULED)
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  endedAt       DateTime?
+  durationSecs  Int?
+  audioUrl      String?
+  participants  String[]
+  linkedAccount String?
+  score         Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  userId        String
+  workspaceId   String
+  user          User      @relation(fields: [userId], references: [id])
+  workspace     Workspace @relation(fields: [workspaceId], references: [id])
+  transcript    Transcript?
+  summary       Summary?
+  actions       ActionItem[]
+  insights      Insight[]
+  embeddings    MeetingEmbedding[]
+  @@map("meetings")
+}
+
+enum MeetingType   { SALES CUSTOMER INTERNAL INVESTOR DEMO }
+enum MeetingStatus { SCHEDULED LIVE PROCESSING COMPLETED ARCHIVED }
+
+model Transcript {
+  id         String   @id @default(cuid())
+  meetingId  String   @unique
+  rawText    String   @db.Text
+  segments   Json
+  language   String   @default("en")
+  confidence Float?
+  createdAt  DateTime @default(now())
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  @@map("transcripts")
+}
+
+model Summary {
+  id          String   @id @default(cuid())
+  meetingId   String   @unique
+  content     String   @db.Text
+  keyPoints   String[]
+  decisions   String[]
+  commitments Json[]
+  createdAt   DateTime @default(now())
+  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  @@map("summaries")
+}
+
+model ActionItem {
+  id          String       @id @default(cuid())
+  text        String
+  priority    Priority     @default(MEDIUM)
+  status      ActionStatus @default(PENDING)
+  assigneeId  String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  meetingId   String?
+  workspaceId String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  assignee    User?    @relation(fields: [assigneeId], references: [id])
+  meeting     Meeting? @relation(fields: [meetingId], references: [id])
+  @@map("action_items")
+}
+
+enum Priority    { LOW MEDIUM HIGH URGENT }
+enum ActionStatus { PENDING IN_PROGRESS DONE CANCELLED }
+
+model Insight {
+  id          String      @id @default(cuid())
+  type        InsightType
+  title       String
+  body        String      @db.Text
+  severity    Int         @default(5)
+  resolved    Boolean     @default(false)
+  resolvedAt  DateTime?
+  meetingId   String?
+  workspaceId String
+  createdAt   DateTime    @default(now())
+  meeting     Meeting?  @relation(fields: [meetingId], references: [id])
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  @@map("insights")
+}
+
+enum InsightType { RISK OPPORTUNITY PATTERN DRIFT_ALERT WIN_PATTERN COMMITMENT }
+
+model CRMAccount {
+  id          String    @id @default(cuid())
+  name        String
+  domain      String?
+  size        String?
+  industry    String?
+  stage       DealStage @default(PROSPECT)
+  arr         Float     @default(0)
+  potential   Float     @default(0)
+  sentiment   Int       @default(75)
+  riskLevel   RiskLevel @default(LOW)
+  lastContact DateTime?
+  workspaceId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  @@map("crm_accounts")
+}
+
+enum DealStage { PROSPECT DISCOVERY DEMO PROPOSAL NEGOTIATION CLOSED_WON CLOSED_LOST ONBOARDING HEALTHY AT_RISK RENEWAL }
+enum RiskLevel { LOW MEDIUM HIGH CRITICAL }
+
+model GraphNode {
+  id          String   @id @default(cuid())
+  label       String
+  type        NodeType
+  metadata    Json?
+  workspaceId String
+  createdAt   DateTime @default(now())
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id])
+  sourceEdges GraphEdge[] @relation("source")
+  targetEdges GraphEdge[] @relation("target")
+  @@map("graph_nodes")
+}
+
+model GraphEdge {
+  id          String   @id @default(cuid())
+  label       String?
+  weight      Float    @default(1.0)
+  sourceId    String
+  targetId    String
+  createdAt   DateTime @default(now())
+  source      GraphNode @relation("source", fields: [sourceId], references: [id])
+  target      GraphNode @relation("target", fields: [targetId], references: [id])
+  @@map("graph_edges")
+}
+
+enum NodeType { COMPANY PERSON TOPIC RISK DEAL FEATURE_REQUEST }
+
+model MeetingEmbedding {
+  id        String   @id @default(cuid())
+  meetingId String
+  chunk     String   @db.Text
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime @default(now())
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  @@map("meeting_embeddings")
+}
+
+model Integration {
+  id           String   @id @default(cuid())
+  provider     String
+  connected    Boolean  @default(false)
+  accessToken  String?  @db.Text
+  refreshToken String?  @db.Text
+  config       Json?
+  workspaceId  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  workspace    Workspace @relation(fields: [workspaceId], references: [id])
+  @@unique([workspaceId, provider])
+  @@map("integrations")
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      ChatRole
+  content   String   @db.Text
+  userId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  @@map("chat_messages")
+}
+
+enum ChatRole { USER ASSISTANT SYSTEM }
